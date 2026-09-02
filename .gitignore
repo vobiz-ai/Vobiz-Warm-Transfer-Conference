@@ -1,0 +1,12 @@
+.env
+.venv/
+.runtime.json
+__pycache__/
+*.pyc
+data/
+events/
+recordings/
+media/
+*.wav
+*.mp3
+*.log

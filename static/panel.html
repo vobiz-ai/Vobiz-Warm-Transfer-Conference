@@ -1,0 +1,236 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Vobiz warm transfer — live console</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--line:#252a34;--fg:#e6e9ef;--dim:#8b93a7;
+        --ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--mut:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;
+         gap:18px;align-items:center;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600}
+  .pill{padding:2px 9px;border-radius:99px;font-size:12px;background:var(--panel);
+        border:1px solid var(--line);color:var(--dim)}
+  .pill.live{color:var(--ok);border-color:var(--ok)}
+  .pill.off{color:var(--bad);border-color:var(--bad)}
+  main{display:grid;grid-template-columns:minmax(380px,1fr) minmax(380px,1fr);
+       gap:14px;padding:14px;align-items:start}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+          padding:14px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+     margin:0 0 12px}
+  .member{border:1px solid var(--line);border-radius:6px;padding:11px;margin-bottom:10px}
+  .member.customer{border-left:3px solid var(--acc)}
+  .member.agent{border-left:3px solid var(--mut)}
+  .mrow{display:flex;justify-content:space-between;align-items:center;
+        margin-bottom:9px;gap:10px;flex-wrap:wrap}
+  .who{font-weight:600}
+  .id{color:var(--dim);font-size:12px}
+  .flags{display:flex;gap:6px}
+  .flag{font-size:11px;padding:1px 7px;border-radius:4px;border:1px solid var(--line);
+        color:var(--dim)}
+  .flag.on{background:var(--bad);color:#fff;border-color:var(--bad)}
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  button{background:#1f242e;color:var(--fg);border:1px solid var(--line);
+         border-radius:5px;padding:5px 11px;cursor:pointer;font:inherit;font-size:12px}
+  button:hover:not(:disabled){border-color:var(--acc);color:var(--acc)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  #log{height:190px;overflow-y:auto;font-size:12px}
+  .le{padding:3px 0;border-bottom:1px solid #1c2027;display:flex;gap:9px}
+  .le .t{color:var(--dim);flex-shrink:0}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  #tx{height:340px;overflow-y:auto}
+  .turn{padding:6px 0;border-bottom:1px solid #1c2027}
+  .turn .meta{color:var(--dim);font-size:11px;margin-bottom:2px}
+  .turn.caller .txt{color:var(--acc)}
+  .turn.agentv .txt{color:var(--mut)}
+  .empty{color:var(--dim);padding:22px 0;text-align:center}
+  .hint{color:var(--dim);font-size:12px;margin-top:10px;line-height:1.6}
+  input[type=text]{background:#12151b;border:1px solid var(--line);color:var(--fg);
+       border-radius:5px;padding:5px 9px;font:inherit;font-size:12px;flex:1;min-width:120px}
+</style>
+
+<header>
+  <h1>Vobiz warm transfer — live console</h1>
+  <span class="pill" id="state">no call</span>
+  <span class="pill" id="room">—</span>
+  <span class="pill" id="conn">connecting…</span>
+  <button id="dial" onclick="dialHuman()" disabled
+          style="margin-left:auto;padding:7px 16px;font-size:13px;
+                 border-color:var(--ok);color:var(--ok)">
+    ☎ Transfer — dial the human
+  </button>
+</header>
+
+<main>
+  <section>
+    <h2>Participants</h2>
+    <div id="members"><div class="empty">No one in a room yet.<br>Place a call, then this fills in.</div></div>
+    <div id="pending"></div>
+    <div class="hint">
+      <b>mute</b> — this person cannot be <i>heard</i> ·
+      <b>deaf</b> — this person cannot <i>hear</i><br>
+      Deafening the customer also blinds the AI: its media bug rides their leg.
+    </div>
+  </section>
+
+  <section>
+    <h2>Play / speak to one member</h2>
+    <div style="display:flex;gap:6px;margin-bottom:9px">
+      <input type="text" id="url"
+             value="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input type="text" id="say" value="Only you can hear this, not the customer.">
+    </div>
+    <div class="hint" style="margin:0 0 14px">
+      Must be a <b>direct .mp3 or .wav URL</b>. A SoundCloud or YouTube page is
+      HTML, not audio — Vobiz cannot play it.<br>
+      Send to one member, then have the other confirm they heard
+      <i>nothing</i>. That is what proves per-member audio is private.
+    </div>
+    <div id="targets"></div>
+    <h2 style="margin-top:16px">Activity</h2>
+    <div id="log"></div>
+  </section>
+
+  <section style="grid-column:1/-1">
+    <h2>AI transcript — live</h2>
+    <div id="tx"><div class="empty">Nothing transcribed yet.</div></div>
+  </section>
+</main>
+
+<script>
+let TID = null, seen = 0;
+
+function log(msg, cls) {
+  const d = document.getElementById('log');
+  const t = new Date().toLocaleTimeString();
+  d.insertAdjacentHTML('afterbegin',
+    `<div class="le"><span class="t">${t}</span><span class="${cls||''}">${msg}</span></div>`);
+}
+
+async function ctl(action, member, extra) {
+  if (!TID) return;
+  const body = Object.assign({tid: TID, member: member}, extra || {});
+  try {
+    const r = await fetch('/api/control/' + action,
+      {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    log(`${action} member ${member} → HTTP ${j.status}`, j.ok ? 'ok' : 'bad');
+    refresh();
+  } catch (e) { log(`${action} failed: ${e}`, 'bad'); }
+}
+
+function memberCard(m, role) {
+  const cls = role === 'customer' ? 'customer' : (role === 'human agent' ? 'agent' : '');
+  return `<div class="member ${cls}">
+    <div class="mrow">
+      <span><span class="who">${role}</span> <span class="id">member ${m.id}</span></span>
+      <span class="flags">
+        <span class="flag ${m.muted?'on':''}">${m.muted?'MUTED':'audible'}</span>
+        <span class="flag ${m.deaf?'on':''}">${m.deaf?'DEAF':'hearing'}</span>
+      </span>
+    </div>
+    <div class="btns">
+      <button onclick="ctl('mute','${m.id}')">mute</button>
+      <button onclick="ctl('unmute','${m.id}')">unmute</button>
+      <button onclick="ctl('deaf','${m.id}')">deaf</button>
+      <button onclick="ctl('undeaf','${m.id}')">undeaf</button>
+      <button class="danger" onclick="ctl('kick','${m.id}')">kick</button>
+    </div>
+  </div>`;
+}
+
+function targetRow(m, role) {
+  return `<div class="member">
+    <div class="mrow"><span><span class="who">${role}</span>
+      <span class="id">member ${m.id}</span></span></div>
+    <div class="btns">
+      <button onclick="ctl('play','${m.id}',{url:document.getElementById('url').value})">▶ play to them</button>
+      <button onclick="ctl('stop_play','${m.id}')">■ stop</button>
+      <button onclick="ctl('speak','${m.id}',{text:document.getElementById('say').value})">speak to them</button>
+    </div>
+  </div>`;
+}
+
+async function dialHuman() {
+  const b = document.getElementById('dial');
+  b.disabled = true; b.textContent = '☎ dialling…';
+  try {
+    const r = await fetch('/api/dial-human', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({tid: TID})});
+    const j = await r.json();
+    log(j.ok ? `dialling ${j.targets.join(', ')}` : `dial failed: ${j.error}`,
+        j.ok ? 'ok' : 'bad');
+  } catch (e) { log('dial failed: ' + e, 'bad'); }
+  b.textContent = '☎ Transfer — dial the human';
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/panel');
+    const d = await r.json();
+    document.getElementById('conn').textContent = 'connected';
+    document.getElementById('conn').className = 'pill live';
+
+    if (!d.tid) {
+      document.getElementById('state').textContent = 'no call';
+      document.getElementById('state').className = 'pill';
+      document.getElementById('members').innerHTML =
+        '<div class="empty">No one in a room yet.<br>Place a call, then this fills in.</div>';
+      document.getElementById('targets').innerHTML = '';
+      return;
+    }
+    TID = d.tid;
+    document.getElementById('state').textContent = d.state;
+    document.getElementById('state').className =
+      'pill ' + (d.state === 'bridged' ? 'live' : (d.state === 'ended' ? 'off' : ''));
+    document.getElementById('room').textContent = d.room;
+
+    const db = document.getElementById('dial');
+    db.disabled = !d.can_dial;
+
+    const pend = document.getElementById('pending');
+    pend.innerHTML = (d.pending || []).map(p =>
+      `<div class="member" style="border-left:3px solid var(--warn);opacity:.75">
+         <div class="mrow"><span><span class="who">${p.role}</span>
+           <span class="id">${p.state}</span></span>
+           <span class="flag">not in the room — no controls yet</span></div>
+       </div>`).join('');
+
+    if (d.members.length) {
+      document.getElementById('members').innerHTML =
+        d.members.map(m => memberCard(m, m.role)).join('');
+      document.getElementById('targets').innerHTML =
+        d.members.map(m => targetRow(m, m.role)).join('');
+    } else {
+      document.getElementById('members').innerHTML =
+        '<div class="empty">Room is empty.</div>';
+      document.getElementById('targets').innerHTML = '';
+    }
+
+    const tx = document.getElementById('tx');
+    if (d.transcript.length) {
+      if (d.transcript.length !== seen) {
+        seen = d.transcript.length;
+        tx.innerHTML = d.transcript.map(t =>
+          `<div class="turn ${t.role === 'caller' ? 'caller' : 'agentv'}">
+             <div class="meta">${t.leg} · ${t.role === 'caller' ? 'human' : 'AI'}</div>
+             <div class="txt">${t.text.replace(/</g,'&lt;')}</div></div>`).join('');
+        tx.scrollTop = tx.scrollHeight;
+      }
+    } else {
+      tx.innerHTML = '<div class="empty">Nothing transcribed yet.</div>';
+    }
+  } catch (e) {
+    document.getElementById('conn').textContent = 'server down';
+    document.getElementById('conn').className = 'pill off';
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>

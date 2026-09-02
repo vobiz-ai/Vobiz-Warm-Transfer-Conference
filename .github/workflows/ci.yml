@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      # No credentials in CI, so the checks that need a key report as skipped.
+      # Everything else runs: the answer XML, the audio maths, the config.
+      # 3.13 is in the matrix because audio.py exists to avoid `audioop`, which
+      # was removed in that version.
+      - name: Selftest
+        run: python selftest.py
