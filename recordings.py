@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -39,6 +40,10 @@ from pathlib import Path
 import httpx
 
 import vobiz
+
+# This tool reports its own diagnostics; the client's per-request
+# logging would otherwise print a raw 401 ahead of them.
+logging.getLogger("vobiz").setLevel(logging.CRITICAL)
 
 PORT = os.getenv("HTTP_PORT", "8100")
 OUT = Path(__file__).parent / "recordings"

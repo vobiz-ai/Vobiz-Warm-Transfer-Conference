@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import sys
@@ -28,6 +29,10 @@ import urllib.error
 import urllib.request
 
 import vobiz
+
+# This tool reports its own diagnostics; the client's per-request
+# logging would otherwise print a raw 401 ahead of them.
+logging.getLogger("vobiz").setLevel(logging.CRITICAL)
 
 PORT = os.getenv("HTTP_PORT", "8100")
 PULSE = 60
