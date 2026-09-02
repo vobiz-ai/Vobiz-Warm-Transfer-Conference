@@ -45,9 +45,8 @@ import gemini_live
 import runtime
 import store
 import vobiz
-import web
 import xml_docs
-from web import call_params
+from runtime import call_params, xml_reply
 
 logger = logging.getLogger("d1")
 router = APIRouter(prefix="/d1")
@@ -98,7 +97,7 @@ def _key(tid: str, role: str) -> str:
     return f"{tid}:{role}"
 
 
-_xml = web.xml_reply
+_xml = xml_reply
 
 
 # ===========================================================================

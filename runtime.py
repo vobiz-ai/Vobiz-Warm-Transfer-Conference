@@ -1,6 +1,6 @@
 """
-runtime.py — public URL resolution and URL builders
-====================================================
+runtime.py — public URL resolution, URL builders, request helpers
+=================================================================
 
 Separate from `app.py` for the same reason `store.py` is: `app.py` runs as
 `__main__`, so importing it from a flow module would create a second copy with
@@ -16,6 +16,10 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
+from fastapi import Request
+from fastapi.responses import Response
+
+import store
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -88,3 +92,41 @@ def start_ngrok() -> str:
         options["domain"] = domain
     tunnel = ngrok.connect(HTTP_PORT, "http", **options)
     return tunnel.public_url.replace("http://", "https://")
+
+
+# ---------------------------------------------------------------------------
+# Request handling
+# ---------------------------------------------------------------------------
+
+
+from fastapi import Request
+from fastapi.responses import Response
+
+import store
+
+
+async def call_params(request: Request) -> dict:
+    """
+    Every Vobiz webhook is `application/x-www-form-urlencoded`, never JSON, and
+    the answer/callback URLs also carry our own query parameters. The mock
+    harness sends JSON. Merge all three.
+    """
+    params = dict(request.query_params)
+    if request.method == "POST":
+        try:
+            form = await request.form()
+            params.update({k: str(v) for k, v in form.items()})
+        except Exception:
+            try:
+                body = await request.json()
+                if isinstance(body, dict):
+                    params.update({k: str(v) for k, v in body.items()})
+            except Exception:
+                pass
+    return params
+
+
+def xml_reply(document: str, tid: str = "", note: str = "") -> Response:
+    """Return an XML document and keep a copy of exactly what was sent."""
+    store.record("xml_reply", {"tid": tid, "note": note, "xml": document})
+    return Response(content=document, media_type="application/xml")

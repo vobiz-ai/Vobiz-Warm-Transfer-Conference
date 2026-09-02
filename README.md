@@ -176,7 +176,7 @@ Afterwards:
 
 ```bash
 .venv/bin/python report.py                 # webhooks, per-leg cost, recordings
-.venv/bin/python recordings.py             # download and split the audio
+.venv/bin/python report.py --download      # fetch the audio and split the channels
 ```
 
 ## Files
@@ -190,12 +190,11 @@ Afterwards:
 | `audio.py` | μ-law ⇄ PCM16 and resampling, pure Python |
 | `vobiz.py` | REST client — calls, streams, conference members, CDR, recordings |
 | `store.py` | roster, handoff state machine, capture |
-| `runtime.py`, `web.py` | public-URL resolution, request parsing |
+| `runtime.py` | public-URL resolution, URL builders, request helpers |
 | `selftest.py` | parse every document offline |
-| `mock.py`, `mocking.py` | nine scenarios end to end, no phone calls |
+| `mock.py` | nine scenarios end to end, no phone calls |
 | `call.py` | place one call |
-| `report.py` | webhooks, per-leg pricing, recording status |
-| `recordings.py` | download and split the audio |
+| `report.py` | webhooks, per-leg pricing, recordings — `--download` fetches and splits the audio |
 | `static/panel.html` | the live console |
 
 ## Recording
@@ -214,7 +213,7 @@ the element it should record alongside:
 `recordSession="true"` captures the whole leg including anything bridged into it,
 and survives a transfer. Both legs are recorded here, so the colleague's briefing
 is kept as well as the conversation. Output is stereo with one party per channel;
-`recordings.py` splits them.
+`report.py --download` splits them.
 
 With `redirect="false"` the action URL must return an empty `<Response>`, or it
 interrupts a flow that has already moved on.
