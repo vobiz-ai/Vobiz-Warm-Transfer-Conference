@@ -30,7 +30,7 @@ always zero. Do not build on the exception.
 A handoff produces **two charges**, and the bridged period is billed on both
 legs simultaneously. The A-leg's own report is roughly half the truth.
 
-Measured on a live bridge, 31 Aug 2026:
+For a bridged pair of legs:
 
 | | A-leg | B-leg |
 |---|---|---|

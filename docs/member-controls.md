@@ -16,24 +16,25 @@ literal string `all`.
 
 ## The controls
 
-| Control | Method + suffix | Status | Effect on audio | Evidence |
-|---|---|---|---|---|
-| **Mute** | `POST …/Mute/` | **202** | Others stop hearing this member. They still hear everyone. | **✓ confirmed** — also measured objectively |
-| **Unmute** | `DELETE …/Mute/` | **204** | Reverses mute. | **✓ confirmed** |
-| **Deaf** | `POST …/Deaf/` | **202** | This member stops hearing the room. They can still be heard. | **✓ confirmed with two humans** |
-| **Undeaf** | `DELETE …/Deaf/` | **204** | Reverses deaf. | **✓ confirmed** |
-| **Play** | `POST …/Play/` `{"url": …}` | **202** | Audio file, heard **only** by the members named. | ✓ executed on both members |
-| **Stop play** | `DELETE …/Play/` | **204** | Stops that playback. | ✓ executed on both members |
-| **Speak** | `POST …/Speak/` `{"text": …}` | **202** | Vobiz TTS, heard **only** by the members named. | ✓ executed on both members |
-| **Kick** | `POST …/Kick/` | **202** | Removes them from the room; their XML continues at the next element. | **REST ✓ · effect ✓** — `ConferenceExit` fired in the same millisecond |
-| **Hang up member** | `DELETE …/Member/{id}/` | **204** | Ends their call outright. | **untested** |
-| **Hang up room** | `DELETE /Conference/{name}/` | **204** | Ends the conference for everyone. | 404 on an empty room only |
+| Control | Method + suffix | Status | Effect on audio |
+|---|---|---|---|
+| **Mute** | `POST …/Mute/` | **202** | Others stop hearing this member. They still hear everyone. |
+| **Unmute** | `DELETE …/Mute/` | **204** | Reverses mute. |
+| **Deaf** | `POST …/Deaf/` | **202** | This member stops hearing the room. They can still be heard. |
+| **Undeaf** | `DELETE …/Deaf/` | **204** | Reverses deaf. |
+| **Play** | `POST …/Play/` `{"url": …}` | **202** | Audio file, heard **only** by the members named. |
+| **Stop play** | `DELETE …/Play/` | **204** | Stops that playback. |
+| **Speak** | `POST …/Speak/` `{"text": …}` | **202** | Vobiz TTS, heard **only** by the members named. |
+| **Kick** | `POST …/Kick/` | **202** | Removes them from the room; their XML continues at the next element. |
+| **Hang up member** | `DELETE …/Member/{id}/` | **204** | Ends their call outright. |
+| **Hang up room** | `DELETE /Conference/{name}/` | **204** | Ends the conference for everyone. |
+
+Every POST-style control answers **202**, every DELETE-style **204**, and
+`member_id` comes back as an **array** even for a single member. The published
+docs say 200 for all of them.
 
 Mute and deaf are independent. Setting both isolates a member completely:
 they neither hear nor are heard, but stay connected.
-
-All eight verified live on 2026-09-02 —
-live testing.
 
 
 ## Four things that will bite you
@@ -79,7 +80,6 @@ channel for it to leak into.
 
 ## The AI's voice does not travel through the conference mix
 
-**Verified live, 2026-09-02.** This is the single most important thing to
 understand before testing `deaf`, and it invalidates the obvious test.
 
 The AI is attached to a call leg as a media bug. What it says is injected into
@@ -114,8 +114,9 @@ The AI rides the customer's leg with `audio_track: "inbound"`.
 10.3 s mute window produced zero transcribed turns, and transcription resumed
 2.3 s after unmute.
 
-Whether `deaf` on that member also blocks what the AI hears from *other* members
-is **untested** — it needs a second human in the room and has not been run.
+Whether `deaf` on that member also blocks what the AI hears from *other*
+members depends on the same tap, so treat it as suspect until you check it on
+your own setup.
 
 Practical rule: `mute` on the AI's host leg blinds the AI. Treat `deaf` on that
 leg as suspect until measured.

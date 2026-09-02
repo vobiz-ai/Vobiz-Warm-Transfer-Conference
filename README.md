@@ -22,110 +22,30 @@ and the AI stays on the line afterwards, listening.
         │                 │
         │                 └── "yes, I'll take it"
         │                          │
-        └──────────────────────────┴── their leg walks into the room, 0.1s later
+        └──────────────────────────┴── their leg walks into the room
                                        all three connected, AI goes quiet
 ```
 
-**Verified on live PSTN calls.** Full handovers, both legs recorded, every
-conference member control exercised on two humans. See
-[Test results](#test-results).
-
 ---
 
-## The one thing to understand
+## How it works
 
 **The customer never moves.** Their answer XML *is* `<Conference>`, so they are
 in a room, alone, from the first second. The "transfer" is the human **joining
 the room the customer is already in** — no redirect, no Transfer API, and no gap
 in the customer's audio.
 
-Measured on a live call:
+The sequence:
 
 ```
- +9.2s   ConferenceEnter   member=32     customer, alone
-+44.7s   StartApp                        colleague answers — separate call
-+44.9s   StartStream                     private briefing begins
-+60.3s   DroppedStream                   briefing socket closes
-+60.4s   ConferenceEnter   member=33     colleague is in the room
+ StartApp           customer answers
+ ConferenceEnter    they are in the room, alone
+ ─ POST /Call/{uuid}/Stream/ ─── the AI attaches to their leg
+ StartApp           colleague answers — a separate call
+ StartStream        their private briefing begins
+ DroppedStream      briefing socket closes
+ ConferenceEnter    colleague is in the room, ~0.1s later
 ```
-
-**15.4 seconds of private briefing, then a 0.1 second transition.**
-
----
-
-## Setup
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-cp .env.example .env       # then fill it in
-```
-
-You need Vobiz credentials, a Vobiz DID to call from, and a
-[Gemini API key](https://aistudio.google.com/apikey). Live model names change
-often, so check which your key can use before debugging an opaque close.
-
-## Run it
-
-Always in this order — the first two steps cost nothing, and a malformed answer
-document costs a live call to diagnose.
-
-```bash
-.venv/bin/python selftest.py               # parse every XML document offline
-VOBIZ_MOCK=1 .venv/bin/python app.py       # no real calls can be placed
-.venv/bin/python mock.py --all             # 9 scenarios, no phone calls
-```
-
-```
-  ── happy ──
-    pass  customer XML joins the room
-    pass  customer XML sets stayAlone
-    pass  AI attached to the customer leg
-    pass  agent gets a briefing stream
-    pass  briefing happens before the room is joined
-    pass  all parties bridged
-    ...
-  all checks passed          110 checks, 9 scenarios
-```
-
-Then, for real:
-
-```bash
-.venv/bin/python app.py                    # ngrok starts if PUBLIC_URL is empty
-.venv/bin/python call.py                   # rings the numbers in .env
-.venv/bin/python call.py --agent sip       # reach the human on a SIP/WebRTC endpoint
-.venv/bin/python call.py --agent both      # ring both, first to accept wins
-```
-
-While a call is up, open **`http://localhost:8100/panel`** — a live console with
-the roster, the member controls, and the AI transcript as it happens.
-
-Afterwards:
-
-```bash
-.venv/bin/python report.py                 # webhooks, per-leg cost, recordings
-.venv/bin/python recordings.py             # download and split the audio
-```
-
-## Test results
-
-Live PSTN calls on a funded account.
-
-| | Result |
-|---|---|
-| `selftest.py` | 11 documents parsed, 0 failed |
-| `mock.py --all` | **110 checks, 9 scenarios, 0 failed** |
-| Full handover | AI → private briefing → accept → three-party bridge |
-| Briefing privacy | customer hears nothing — the colleague is not in the room yet |
-| Accept → in the room | **0.1 s** (`DroppedStream` then `ConferenceEnter`) |
-| AI in the room | `POST /Call/{uuid}/Stream/` → **202**, agent audible ~1 s later |
-| Both legs recorded | stereo, one party per channel, verified by raw-PCM hash |
-| Member controls | mute · unmute · deaf · undeaf · play · stop · speak · kick, all on two humans |
-| Fallbacks | no-answer, decline, two-agent race, customer-hangs-up-while-ringing |
-| Cost, measured | voice **0.45**/min + streaming **0.20**/min, per leg |
-
-## How it works
 
 ### The customer's XML
 
@@ -142,9 +62,9 @@ Live PSTN calls on a funded account.
 </Response>
 ```
 
-`stayAlone="true"` is **not optional**. It initialises `false`, and a member
-alone in a room is kicked straight back out — which is exactly what the customer
-is for the first several seconds.
+Set `stayAlone="true"`. It initialises `false`, and a member alone in a room is
+kicked straight back out — which is exactly what the customer is for the first
+several seconds.
 
 ### The colleague's XML — where the briefing lives
 
@@ -174,7 +94,7 @@ wrong, because the colleague simply is not in the room while the briefing runs.
 
 `<Stream>` and `<Conference>` cannot run at the same time. XML verbs execute in
 order on a leg, and a bidirectional stream blocks it, so a `<Conference>` below
-one is never reached. The way in is the **Stream REST API**, which attaches the
+one is never reached. Use the **Stream REST API** instead, which attaches the
 stream as a media bug on the channel, outside XML sequencing:
 
 ```http
@@ -192,18 +112,74 @@ POST /api/v1/Account/{auth_id}/Call/{call_uuid}/Stream/
 `DELETE /Call/{uuid}/Stream/{stream_id}/` detaches it — that is how the AI drops
 off without ending the call.
 
+Send `bidirectional` as the **string** `"true"`. A JSON boolean is accepted and
+silently gives you a one-way stream. And wait about two seconds after
+`ConferenceEnter` before attaching, or the stream receives no audio.
+
 ### If the model will not act
 
-The AI is told to call `transfer_to_human`. On a live call it once *announced* a
-colleague and never called the function, so nobody was dialled and the caller
-waited for someone who had never been contacted — a failure that is invisible
+The AI is told to call `transfer_to_human`. Models sometimes *announce* a
+colleague without calling the function, which means nobody is dialled and the
+caller waits for someone who was never contacted — a failure that is invisible
 from the caller's side.
 
 So the server checks rather than trusts. When either the caller asks for a human
 or the AI claims a transfer, a watchdog arms: **+6 s** nudge the model, **+8 s
 more** dial anyway with a summary salvaged from the transcript.
 
-### Files
+---
+
+## Setup
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cp .env.example .env       # then fill it in
+```
+
+You need Vobiz credentials, a Vobiz DID to call from, and a
+[Gemini API key](https://aistudio.google.com/apikey). Live model names change
+often, so check which your key can use before debugging an opaque close.
+
+## Run it
+
+Always in this order. The first two steps cost nothing, and a malformed answer
+document costs a live call to diagnose.
+
+```bash
+.venv/bin/python selftest.py               # parse every XML document offline
+VOBIZ_MOCK=1 .venv/bin/python app.py       # no real calls can be placed
+.venv/bin/python mock.py --all             # nine scenarios, no phone calls
+```
+
+`mock.py` impersonates Vobiz: it posts the real webhooks to the real endpoints
+in the order the platform sends them, and asserts the handover reaches the
+bridge. It covers the happy path, a declined transfer, no-answer, two colleagues
+racing, the customer hanging up mid-ring, a model that will not call the tool,
+and the member controls. It refuses to run against a server that is not in mock
+mode, because `/api/start` places a real call.
+
+Then, for real:
+
+```bash
+.venv/bin/python app.py                    # ngrok starts if PUBLIC_URL is empty
+.venv/bin/python call.py                   # rings the numbers in .env
+.venv/bin/python call.py --agent sip       # reach the colleague on a SIP/WebRTC endpoint
+.venv/bin/python call.py --agent both      # ring both, first to accept wins
+```
+
+While a call is up, open **`http://localhost:8100/panel`** — a live console with
+the roster, the member controls, and the AI transcript as it happens.
+
+Afterwards:
+
+```bash
+.venv/bin/python report.py                 # webhooks, per-leg cost, recordings
+.venv/bin/python recordings.py             # download and split the audio
+```
+
+## Files
 
 | File | Role |
 |---|---|
@@ -216,60 +192,71 @@ more** dial anyway with a summary salvaged from the transcript.
 | `store.py` | roster, handoff state machine, capture |
 | `runtime.py`, `web.py` | public-URL resolution, request parsing |
 | `selftest.py` | parse every document offline |
-| `mock.py` | 9 scenarios end to end, no phone calls |
-| `mocking.py` | stub session, so tool calls can fire without a model |
+| `mock.py`, `mocking.py` | nine scenarios end to end, no phone calls |
 | `call.py` | place one call |
 | `report.py` | webhooks, per-leg pricing, recording status |
 | `recordings.py` | download and split the audio |
-| `static/panel.html` | the live console — roster, member controls, live transcript |
+| `static/panel.html` | the live console |
 
-## Gotchas worth knowing
+## Recording
 
-Each of these cost a live call, or an hour, to establish.
+Conference recording does not produce a file — neither
+`<Conference record="true">` nor `POST /Conference/{room}/Record/`, which
+returns HTTP 200 and writes nothing.
 
-- **`stayAlone="true"` is mandatory.** It initialises `false` and a lone member
-  is kicked out immediately.
-- **`bidirectional` must be the string `"true"`** on the Stream REST API. A JSON
-  boolean is accepted and silently gives you a one-way stream.
-- **Wait ~2 s after `ConferenceEnter`** before attaching the media bug, or it
-  hears nothing.
-- **The AI's voice never enters the conference mix.** It is injected into its
-  host leg by `playAudio`, so `deaf` cannot silence it and the AI cannot address
-  the room. Testing `deaf` needs two humans.
-- **`mute` on the AI's host leg blinds the AI** — measured: a 10.3 s mute window
-  produced zero transcribed turns.
-- **Member controls return 202 and 204, not 200**, and `member_id` comes back as
-  an **array** even for one member.
-- **Member IDs come only from callbacks.** `GET /Conference/{name}/` answers
-  HTTP 200 with `{"error":"failed"}` on a live room.
-- **There is no room-wide Play or Speak** — only `Member/{id}/…` routes exist.
-- **Conference recording writes no file.** Neither `<Conference record="true">`
-  nor `POST /Conference/{room}/Record/` (which returns 200 and does nothing).
-  Per-leg `<Record recordSession="true">` is the working method.
-- **`endConferenceOnExit` kicks everyone**, ignoring `stayAlone` on the
-  remaining members. The kicked legs report `HangupSource=Callee`, so a platform
-  teardown looks like the participant hanging up.
-- **`ConferenceLastMember` does not mean "last to leave"** — it is
-  `Conference-Size == 0` at that event. And callback delivery order is not event
-  order, so two exits can arrive reversed.
-- **Cost is never in a webhook.** `TotalCost` is `0.00000` on every event; the
-  CDR has it, settled within ~120 ms of hangup. `total_cost` **already
-  includes** `streaming_cost` — adding them double-counts.
-- **Malformed answer XML is not an HTTP error.** The call answers, then dies a
-  second later, and only the CDR says `Invalid Answer XML` / code 8011. A URL
-  with two query parameters contains a bare `&`. Run `selftest.py`.
+Use per-leg session recording instead, as a self-closing sibling placed **before**
+the element it should record alongside:
+
+```xml
+<Record fileFormat="mp3" recordSession="true" redirect="false" … />
+```
+
+`recordSession="true"` captures the whole leg including anything bridged into it,
+and survives a transfer. Both legs are recorded here, so the colleague's briefing
+is kept as well as the conversation. Output is stereo with one party per channel;
+`recordings.py` splits them.
+
+With `redirect="false"` the action URL must return an empty `<Response>`, or it
+interrupts a flow that has already moved on.
 
 ## Cost
-
-Measured across 40 real legs:
 
 ```
 total_cost = (0.45 x pulses) + (0.20 x pulses, if the leg streamed)
 ```
 
-Pulses are 60 seconds, rounded up. A typical 90-second handover is two legs and
-about **1.95 INR** — the customer leg alone reports roughly half of that, so
-reconcile per leg.
+Pulses are 60 seconds, rounded up. A warm transfer is two legs, so a 90-second
+handover runs about **1.95 INR**.
+
+Cost never appears in a webhook — `TotalCost` is `0.00000` on every event. The
+CDR has it, settled within about 120 ms of hangup, and `total_cost` **already
+includes** `streaming_cost`, so adding the two double-counts. Fetch a CDR per
+leg: the customer leg alone reports roughly half the real figure.
+
+## Gotchas
+
+- **`stayAlone="true"` is mandatory** wherever a member can briefly be alone.
+- **`bidirectional` must be the string `"true"`** on the Stream REST API.
+- **Wait ~2 s after `ConferenceEnter`** before attaching the media bug.
+- **The AI's voice never enters the conference mix.** It is injected into its
+  host leg by `playAudio`, so `deaf` cannot silence it and the AI cannot address
+  the room — only the leg it rides.
+- **`mute` on the AI's host leg blinds the AI**, because the media bug taps that
+  leg's inbound audio.
+- **Member controls return 202 and 204, not 200**, and `member_id` comes back as
+  an **array** even for one member.
+- **Member IDs come only from callbacks.** `GET /Conference/{name}/` answers
+  HTTP 200 with `{"error":"failed"}` on a live room.
+- **There is no room-wide Play or Speak** — only `Member/{id}/…` routes exist.
+- **`endConferenceOnExit` kicks everyone**, ignoring `stayAlone` on the
+  remaining members. The kicked legs report `HangupSource=Callee`, so a platform
+  teardown looks like the participant hanging up.
+- **`ConferenceLastMember` does not mean "last to leave"** — it is
+  `Conference-Size == 0` at that event. Callback delivery order is not event
+  order either, so two exits can arrive reversed.
+- **Malformed answer XML is not an HTTP error.** The call answers, then dies a
+  second later, and only the CDR says `Invalid Answer XML` / code 8011. A URL
+  with two query parameters contains a bare `&`. Run `selftest.py`.
 
 ## Configuration
 
@@ -278,7 +265,7 @@ change behaviour rather than credentials:
 
 | Key | Default | What it does |
 |---|---|---|
-| `AI_MODE` | `duplex` | `duplex` = Stream REST media bug. `tap` = non-blocking `<Stream audioTrack="both">` plus per-member Speak — proven, but half-duplex and in Vobiz's TTS voice |
+| `AI_MODE` | `duplex` | `duplex` = Stream REST media bug. `tap` = non-blocking `<Stream audioTrack="both">` plus per-member Speak — half-duplex, and in Vobiz's TTS voice rather than the model's |
 | `RECORD_ROOM` | `true` | per-leg session recording on both legs |
 | `RING_TIMEOUT` | `25` | how long the colleague rings before the customer is told |
 | `SETTLE_DELAY` | `2.0` | pause between `ConferenceEnter` and attaching the media bug |
@@ -315,7 +302,7 @@ idle timeout has to exceed your longest call.
 ## Docs
 
 - [Conference member controls](docs/member-controls.md) — every control, the
-  real status codes, and why `deaf` needs two humans to test
+  status codes they really return, and why `deaf` needs two humans to test
 - [Events and webhooks](docs/events-and-webhooks.md) — every event, the fields
   that actually arrive, and the ones that do not
 - [Billing](docs/billing.md) — the rate card, per-leg reconciliation, and why
@@ -333,7 +320,7 @@ useful.
 Two asks before a pull request:
 
 - run `python selftest.py`, and if the change touches the flow run
-  `python mock.py --all` too and paste what it printed;
+  `python mock.py --all` too;
 - keep real call data out of the diff — no transcripts, recordings, call UUIDs,
   account IDs or phone numbers.
 
